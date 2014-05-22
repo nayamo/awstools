@@ -38,11 +38,12 @@ class AWSTools
 			# @argument file (path)
 			# @argument userdata_file (path)
 			# @return spot_instance_request_ids[Array]
-			def instance_request(file, userdata_file=nil)
-				options = JSON.parse(File.read(file))
-				if userdata_file
+			def instance_request(options={}, userdata_hash=nil)
+				# options = JSON.parse(File.read(file))
+				if userdata_hash
 					options['launch_specification'] = {} if !options['launch_specification']
-					options['launch_specification']['user_data'] = Base64.encode64(File.read(userdata_file))
+					# options['launch_specification']['user_data'] = Base64.encode64(File.read(userdata_file))
+					options['launch_specification']['user_data'] = Base64.encode64( JSON.dump(userdata_hash) )
 				end
 				spot_response = @aws_ec2.client.request_spot_instances(options)
 				spot_instance_request_ids = spot_response[:spot_instance_request_set].collect{|elm| elm[:spot_instance_request_id] }
