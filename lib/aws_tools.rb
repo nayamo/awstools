@@ -29,6 +29,11 @@ class AWSTools
 				@aws_ec2.instances[instance_id].tags.set(tags)
 			end
 		end
+		def _terminate_instance(instance_ids)
+			instance_ids.each do |instance_id|
+				@aws_ec2.instances[instance_id].terminate
+			end
+		end
 		#
 		# Spot
 		#
@@ -64,9 +69,13 @@ class AWSTools
 			# @argument tags[Hash]
 			def set_spot_instance_tags(spot_request_ids, tags)
 				_wait_ride_instance(spot_request_ids)
-				describe_spot_response = @aws_ec2.client.describe_spot_instance_requests(:spot_instance_request_ids=>spot_request_ids)
-				instance_ids = describe_spot_response[:spot_instance_request_set].select{|elm| elm[:state] == 'active'}.collect{|elm| elm[:instance_id] }
+				instance_ids = _get_instance_ids(spot_request_ids)
 				_set_instance_tags(instance_ids, tags)
+			end
+
+			def terminate_spot_instance(spot_request_ids)
+				instance_ids = _get_instance_ids(spot_request_ids)
+				_terminate_instance(instance_ids)
 			end
 
 			private
@@ -85,8 +94,51 @@ class AWSTools
 				end
 			end
 
+			def _get_instance_ids(spot_request_ids=[])
+				describe_spot_response = @aws_ec2.client.describe_spot_instance_requests(:spot_instance_request_ids=>spot_request_ids)
+				describe_spot_response[:spot_instance_request_set].select{|elm| elm[:state] == 'active'}.collect{|elm| elm[:instance_id] }
+			end
+
 			# 例外クラス
 			class RideInstanceWaitSecOver < StandardError; end
 		end
 	end
+	#
+	# CloudWatch
+	#
+	class CloudWatch
+		def initialize
+			@aws_cw = AWS::CloudWatch.new
+		end
+
+		def create_alarm(alarm_name, options={})
+			@aws_cw.alarms.create( alarm_name, options)
+		end
+
+		# テスト用
+		def get_alarm_dimensions(alarm_name)
+			@aws_cw.alarms[alarm_name].dimensions
+		end
+		def get_alarm_actions(alarm_name)
+			@aws_cw.alarms[alarm_name].alarm_actions
+		end
+	end
+	#
+	# AutoScaling
+	#
+	class AutoScaling
+		def initialize
+			@aws_auto_scaling = AWS::AutoScaling.new
+		end
+
+		def execute_policy(options={})
+			@aws_auto_scaling.client.execute_policy(options)
+		end
+
+		def get_instance_ids(group_name)
+			group = @aws_auto_scaling.groups[group_name]
+			group.auto_scaling_instances.to_ary
+		end
+	end
 end
+
