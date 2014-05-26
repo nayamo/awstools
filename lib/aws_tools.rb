@@ -22,6 +22,11 @@ class AWSTools
 		def initialize
 			@aws_ec2 = AWS::EC2.new
 		end
+		def get_private_ip(instance_ids)
+			instance_ids.collect do |instance_id|
+				@aws_ec2.instances[instance_id].private_ip_address
+			end
+		end
 
 		private
 		def _set_instance_tags(instance_ids, tags)
