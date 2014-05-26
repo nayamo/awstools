@@ -73,6 +73,10 @@ class AWSTools
 				_set_instance_tags(instance_ids, tags)
 			end
 
+			def get_spot_instance_ids(spot_request_ids)
+				_get_instance_ids(spot_request_ids)
+			end
+
 			def terminate_spot_instance(spot_request_ids)
 				instance_ids = _get_instance_ids(spot_request_ids)
 				_terminate_instance(instance_ids)
