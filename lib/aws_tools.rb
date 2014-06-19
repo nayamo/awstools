@@ -39,39 +39,66 @@ class AWSTools
 				@aws_ec2.instances[instance_id].terminate
 			end
 		end
+		def _subnet_to_availability_zone(subnet_id)
+			subnet = @aws_ec2.subnets[subnet_id]
+			subnet.availability_zone_name
+		end
 		#
 		# Spot
 		#
 		class Spot < EC2
-			# jsonファイルの内容でスポットリクエストする
+			#
+			# hashの内容でスポットリクエストする
 			#
 			# @argument file (path)
 			# @argument userdata_file (path)
 			# @return spot_instance_request_ids[Array]
+			#
 			def instance_request(options={}, userdata_hash=nil)
-				# options = JSON.parse(File.read(file))
-				if userdata_hash
-					options['launch_specification'] = {} if !options['launch_specification']
-					# options['launch_specification']['user_data'] = Base64.encode64(File.read(userdata_file))
-					options['launch_specification']['user_data'] = Base64.encode64( JSON.dump(userdata_hash) )
+				_instance_request(options, userdata_hash)
+			end
+			#
+			# スポットリクエスト時に複数のインスタンスタイプ、価格を指定できる
+			# price_historyの結果で指定した価格より高ければ次の候補に
+			#
+			# @return spot_instance_request_ids[Array]
+			#
+			def instance_request_with_candidates(options={}, userdata_hash=nil, candidates=[])
+				if options['spot_price'] || options['launch_specification']['instance_type']
+					raise 'options のインスタンスタイプ及びスポット価格に指定は必要ありません。' 
 				end
-				spot_response = @aws_ec2.client.request_spot_instances(options)
-				spot_instance_request_ids = spot_response[:spot_instance_request_set].collect{|elm| elm[:spot_instance_request_id] }
-				# AWS上で スポットリクエストのハンドラ？ が立ち上がるまで待機(稀にすぐに立ち上がらない事があるから)
-				safety_counter = 0
-				begin
-					@aws_ec2.client.describe_spot_instance_requests(:spot_instance_request_ids=>spot_instance_request_ids)
-				rescue =>e
-					sleep 1
-					safety_counter += 1
-					raise e if safety_counter > 60
-				end
-				return spot_instance_request_ids
-			end 
+				# スポット価格の履歴を取得
+				res = get_price_history(
+					:availability_zone=>_subnet_to_availability_zone( options['launch_specification']['subnet_id'] ),
+					:start_time=>(Time.now.getutc-3600).iso8601,
+					:end_time=>(Time.now.getutc).iso8601,
+					:product_descriptions=>['Linux/UNIX (Amazon VPC)'],
+					:instance_types=>candidates.collect {|elm| elm['instance_type'] }
+				)
+				elected_candidate = nil
+				candidates.collect {|candidate|
+					res.data[:spot_price_history_set].each {|spot_price_history|
+						if spot_price_history[:instance_type] == candidate['instance_type']
+							if candidate['spot_price'].to_f > spot_price_history[:spot_price].to_f
+								elected_candidate = candidate
+							end
+							break
+						end
+						break if elected_candidate
+					}
+				}
+				raise 'スポットインスタンスの価格が、指定したインスタンスタイプ全てで価格を上回っています。' if !elected_candidate
+				options['spot_price'] =  elected_candidate['spot_price']
+				options['launch_specification']['instance_type'] = elected_candidate['instance_type']
+				# スポットリクエスト
+				_instance_request(options, userdata_hash)
+			end
+			#
 			# 指定したspot_request_idで起動したec2inctanceにtagをセットする
 			#
 			# @argument spot_instance_request_ids[Array]
 			# @argument tags[Hash]
+			#
 			def set_spot_instance_tags(spot_request_ids, tags)
 				_wait_ride_instance(spot_request_ids)
 				instance_ids = _get_instance_ids(spot_request_ids)
@@ -87,7 +114,29 @@ class AWSTools
 				_terminate_instance(instance_ids)
 			end
 
+			def get_price_history(options={})
+				@aws_ec2.client.describe_spot_price_history(options)
+			end
+
 			private
+			def _instance_request(options={}, userdata_hash=nil)
+				if userdata_hash
+					options['launch_specification'] = {} if !options['launch_specification']
+					options['launch_specification']['user_data'] = Base64.encode64( JSON.dump(userdata_hash) )
+				end
+				spot_response = @aws_ec2.client.request_spot_instances(options)
+				spot_instance_request_ids = spot_response[:spot_instance_request_set].collect{|elm| elm[:spot_instance_request_id] }
+				# AWS上で スポットリクエストのハンドラ？ が立ち上がるまで待機(稀にすぐに立ち上がらない事があるから)
+				safety_counter = 0
+				begin
+					@aws_ec2.client.describe_spot_instance_requests(:spot_instance_request_ids=>spot_instance_request_ids)
+				rescue =>e
+					sleep 1
+					safety_counter += 1
+					raise e if safety_counter > 60
+				end
+				return spot_instance_request_ids
+			end
 			# インスタンスが立ち上がるまで待機
 			def _wait_ride_instance(spot_request_ids=[], wait_sec=600)
 				interval = 10
